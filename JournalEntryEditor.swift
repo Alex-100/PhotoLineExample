@@ -2,8 +2,8 @@
 //  JournalEntryEditor.swift
 //  PhotoTimeline
 //
-//  Created by Алексей on 21/02/2019.
-//  Copyright © 2019 Алексей. All rights reserved.
+//  Created by Alex on 05/03/2019.
+//  Copyright © 2019 Alex. All rights reserved.
 //
 
 import Foundation
