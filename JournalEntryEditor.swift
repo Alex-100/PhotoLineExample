@@ -6,6 +6,7 @@
 //  Copyright © 2019 Alex. All rights reserved.
 //
 
+
 import Foundation
 import UIKit
 import MapKit
@@ -37,6 +38,7 @@ class JournalEntryEditor: UITableViewController, UICollectionViewDataSource, UIC
     let toolbarDp = UIToolbar()
     let preventEdit = PreventEditDelegate()
     let closeSoftKeyboard = CloseSoftKeyboardDelegate()
+    let imageManager = ImageManager()
     let imagePicker = UIImagePickerController()
     let maxImages = 6
     let thumbnailSize = CGSize(width: 400, height: 250)
@@ -68,6 +70,20 @@ class JournalEntryEditor: UITableViewController, UICollectionViewDataSource, UIC
     
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+    }
+    
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+
+        // remove listener
+        firebaseManager.removeListener()
+
+        selectedImagesArray.removeAll()
+    }
+    
+    
+    override func viewDidLoad() {
+        super.viewDidLoad()
         
         // check if user logged in and save handle
         firebaseManager.isUserlogedIn { (isLogged) in
@@ -77,20 +93,9 @@ class JournalEntryEditor: UITableViewController, UICollectionViewDataSource, UIC
                 }
                 self.present(cntrl, animated: true, completion: nil)
             }
-
+            
         }
-    }
-    
-    override func viewWillDisappear(_ animated: Bool) {
-        super.viewWillDisappear(animated)
 
-        // remove listener
-        firebaseManager.removeListener()
-    }
-    
-    
-    override func viewDidLoad() {
-        super.viewDidLoad()
         
         alertManager = AlertManager(target: self.navigationItem)
 
@@ -125,14 +130,14 @@ class JournalEntryEditor: UITableViewController, UICollectionViewDataSource, UIC
             entryIndex = realmManager.addNestedObject(target: journalRef, object: newEntry)
             
             alertManager?.showSpinner(message: "Adding...")
-            firebaseManager.addJournalEntry(newEntry, journalRootID: journalRef.entryID) { [weak self] (err) in
+            firebaseManager.addJournalEntry(newEntry, journalRootID: journalRef.entryID) { [unowned self] (err) in
                 if err != nil {
-                    self!.alertManager!.showOkDialogue(title: "Error",
+                    self.alertManager!.showOkDialogue(title: "Error",
                                                        message: err!.localizedDescription,
-                                                       target: self!)
+                                                       target: self)
                     
                 }
-                self?.alertManager?.hideSpinner()
+                self.alertManager?.hideSpinner()
             }
 
         }
@@ -143,14 +148,15 @@ class JournalEntryEditor: UITableViewController, UICollectionViewDataSource, UIC
         selectedLocationLongitude = journalRef!.entries[entryIndex!].locationLongitute
         selectedLocationLattitude = journalRef!.entries[entryIndex!].locationLattitute
         selectedLocationRegionID = journalRef!.entries[entryIndex!].locationRegionID
+        
+        // load images
         selectedImagesArray.removeAll()
-
         let fileNames = journalRef!.entries[entryIndex!].imagesFilenames
         let thumbnailsFilename = journalRef!.entries[entryIndex!].thumbnails
         for index in 0 ..< fileNames.count {
 
-            let (img, imageURL) = ImageManager.createImageFromFilename(fileNames[index])
-            let (thumbnail, thumbnailURL) = ImageManager.createImageFromFilename(thumbnailsFilename[index])
+            let (img, imageURL) = ImageManager.composeImageFromFilename(fileNames[index])
+            let (thumbnail, thumbnailURL) = ImageManager.composeImageFromFilename(thumbnailsFilename[index])
             
             guard img != nil,
                 imageURL != nil,
@@ -165,7 +171,6 @@ class JournalEntryEditor: UITableViewController, UICollectionViewDataSource, UIC
                                       thumbnail: thumbnail!,
                                       thumbnailPath: thumbnailURL!)
             selectedImagesArray.append(newEntry)
-
         }
         
         creationDate.text = dateManager.getShortDate(date: selectedCreationDate!, locale: Locale.current)
@@ -387,39 +392,39 @@ class JournalEntryEditor: UITableViewController, UICollectionViewDataSource, UIC
         // [START Level1]
         alertManager?.showSpinner(message: "Deleting...")
         hasBackgroundWork = true
-        firebaseManager.removeNestedJournalEntry(entry: objectForDel, completion: { [weak self] (error) in
+        firebaseManager.removeNestedJournalEntry(entry: objectForDel, completion: { [unowned self] (error) in
             if error != nil {
-                self!.alertManager!.showOkDialogue(title: "Error",
+                self.alertManager!.showOkDialogue(title: "Error",
                                                    message: error!.localizedDescription,
-                                                   target: self!)
-                self?.alertManager?.hideSpinner()
-                self?.hasBackgroundWork = false
+                                                   target: self)
+                self.alertManager?.hideSpinner()
+                self.hasBackgroundWork = false
                 return
             }
             // [END Level1]
             
             // [START Level2]
-            self?.firebaseManager.changeJournalRootFields(
-                object: self!.journalRef,
-                title: self!.journalRef.title,
-                creationDate: self!.journalRef.creationDate,
+            self.firebaseManager.changeJournalRootFields(
+                object: self.journalRef,
+                title: self.journalRef.title,
+                creationDate: self.journalRef.creationDate,
                 lastModifiedDate: Date(),
                 numberOFCountries: countries,
                 numberOfEntries: entries,
-                entryID: self!.journalRef.entryID,
-                completion: { [weak self] (error) in
+                entryID: self.journalRef.entryID,
+                completion: { [unowned self] (error) in
                     if error != nil {
-                        self!.alertManager!.showOkDialogue(title: "Error",
+                        self.alertManager!.showOkDialogue(title: "Error",
                                                            message: error!.localizedDescription,
-                                                           target: self!)
-                        self?.alertManager?.hideSpinner()
-                        self?.hasBackgroundWork = false
+                                                           target: self)
+                        self.alertManager?.hideSpinner()
+                        self.hasBackgroundWork = false
                         return
                     }
 
-                    self?.alertManager?.hideSpinner()
-                    self?.hasBackgroundWork = false
-                    self?.navigationController?.popViewController(animated: true)
+                    self.alertManager?.hideSpinner()
+                    self.hasBackgroundWork = false
+                    self.navigationController?.popViewController(animated: true)
                     // [END Level2]
             })
         })
@@ -597,36 +602,36 @@ class JournalEntryEditor: UITableViewController, UICollectionViewDataSource, UIC
             target: journalRef,
             object: newObject,
             largeImages: largeImagesArray,
-            completion: { [weak self] (error) in
+            completion: { [unowned self] (error) in
                 if error != nil {
-                    self?.alertManager?.showOkDialogue(title: "Error",
+                    self.alertManager?.showOkDialogue(title: "Error",
                                                        message: error!.localizedDescription,
-                                                       target: self!)
-                    self?.alertManager?.hideSpinner()
+                                                       target: self)
+                    self.alertManager?.hideSpinner()
                     return
                 }
                 // [END Level1]
                 
                 // [START Level2]
-                self?.firebaseManager.changeJournalRootFields (
-                    object: self!.journalRef,
+                self.firebaseManager.changeJournalRootFields (
+                    object: self.journalRef,
                     title: nil,
                     creationDate: nil,
                     lastModifiedDate: Date(),
                     numberOFCountries: countries,
                     numberOfEntries: entries,
                     entryID: nil,
-                    completion: { [weak self] (error) in
+                    completion: { [unowned self] (error) in
                         if error != nil {
-                            self?.alertManager?.showOkDialogue(title: "Error",
+                            self.alertManager?.showOkDialogue(title: "Error",
                                                                message: error!.localizedDescription,
-                                                               target: self!)
-                            self?.alertManager?.hideSpinner()
+                                                               target: self)
+                            self.alertManager?.hideSpinner()
                             return
                         }
-                        self!.navigationController?.popViewController(animated: true)
-                        self?.alertManager?.hideSpinner()
-                        self?.hasBackgroundWork = false
+                        self.navigationController?.popViewController(animated: true)
+                        self.alertManager?.hideSpinner()
+                        self.hasBackgroundWork = false
                         // [END Level2]
                 })
         })
