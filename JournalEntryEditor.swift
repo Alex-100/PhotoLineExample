@@ -7,6 +7,7 @@
 //
 
 
+
 import Foundation
 import UIKit
 import MapKit
@@ -31,6 +32,7 @@ class JournalEntryEditor: UITableViewController, UICollectionViewDataSource, UIC
     var firebaseManager = FirebaseManager()
     var alertManager: AlertManager?
     var hasBackgroundWork = false
+    var editingModeOn = false
     
     let realmManager = RealmManager()
     let dateManager = DateManager()
@@ -53,7 +55,7 @@ class JournalEntryEditor: UITableViewController, UICollectionViewDataSource, UIC
     @IBOutlet var saveButtonRef: UIButton!
     
     //the supplementary struct for collectionView
-    struct ImageEntry {
+    class ImageEntry {
         var image: UIImage
         var path: URL
         var thumbnail: UIImage
@@ -66,20 +68,15 @@ class JournalEntryEditor: UITableViewController, UICollectionViewDataSource, UIC
             self.thumbnailPath = thumbnailPath
             self.isSelected = false
         }
+        deinit {
+            print("Structure deallocated")
+        }
     }
     
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
     }
     
-    override func viewWillDisappear(_ animated: Bool) {
-        super.viewWillDisappear(animated)
-
-        // remove listener
-        firebaseManager.removeListener()
-
-        selectedImagesArray.removeAll()
-    }
     
     
     override func viewDidLoad() {
@@ -149,30 +146,6 @@ class JournalEntryEditor: UITableViewController, UICollectionViewDataSource, UIC
         selectedLocationLattitude = journalRef!.entries[entryIndex!].locationLattitute
         selectedLocationRegionID = journalRef!.entries[entryIndex!].locationRegionID
         
-        // load images
-        selectedImagesArray.removeAll()
-        let fileNames = journalRef!.entries[entryIndex!].imagesFilenames
-        let thumbnailsFilename = journalRef!.entries[entryIndex!].thumbnails
-        for index in 0 ..< fileNames.count {
-
-            let (img, imageURL) = ImageManager.composeImageFromFilename(fileNames[index])
-            let (thumbnail, thumbnailURL) = ImageManager.composeImageFromFilename(thumbnailsFilename[index])
-            
-            guard img != nil,
-                imageURL != nil,
-                thumbnail != nil,
-                thumbnailURL != nil  else {
-                print("Cannot create an image")
-                continue
-            }
-
-            let newEntry = ImageEntry(image: img!,
-                                      path: imageURL!,
-                                      thumbnail: thumbnail!,
-                                      thumbnailPath: thumbnailURL!)
-            selectedImagesArray.append(newEntry)
-        }
-        
         creationDate.text = dateManager.getShortDate(date: selectedCreationDate!, locale: Locale.current)
         addressTextField.text = selectedLocationName
         journalName.text = journalRef.title
@@ -201,11 +174,54 @@ class JournalEntryEditor: UITableViewController, UICollectionViewDataSource, UIC
         
         // add handler to button
         saveButtonRef.addTarget(self, action: #selector(saveJournalEntryHandler), for: .touchUpInside)
+        
+        
+        // load images
+        //selectedImagesArray.removeAll()
+        let fileNames = journalRef!.entries[entryIndex!].imagesFilenames
+        let thumbnailsFilename = journalRef!.entries[entryIndex!].thumbnails
+        for index in 0 ..< fileNames.count {
+            
+            let (img, imageURL) = ImageManager.composeImageFromFilename(fileNames[index])
+            let (thumbnail, thumbnailURL) = ImageManager.composeImageFromFilename(thumbnailsFilename[index])
+            
+            guard img != nil,
+                imageURL != nil,
+                thumbnail != nil,
+                thumbnailURL != nil  else {
+                    print("Cannot create an image")
+                    continue
+            }
+            
+            let newEntry = ImageEntry(image: img!,
+                                      path: imageURL!,
+                                      thumbnail: thumbnail!,
+                                      thumbnailPath: thumbnailURL!)
+            selectedImagesArray.append(newEntry)
+            
+        }
+        //collectionViewRef.reloadData()
+
+        
     }
     
     
-    //MARK: show an alert if background work exists
+    
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        
+    }
 
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        
+        // remove listener
+        firebaseManager.removeListener()
+        
+    }
+    
+    //MARK: show an alert if background work exists
+    
     @objc func backStep() {
         if hasBackgroundWork {
             let alert = UIAlertController(title: "Alert",
@@ -219,14 +235,18 @@ class JournalEntryEditor: UITableViewController, UICollectionViewDataSource, UIC
             let leaveAction = UIAlertAction(title: "Wait",
                                             style: .cancel,
                                             handler: nil)
-
+            
             alert.addAction(closeAction)
             alert.addAction(leaveAction)
             self.present(alert, animated: true, completion: nil)
         }
+
+        // clean images array and deallocate memory
+        selectedImagesArray.removeAll()
+
         self.navigationController?.popViewController(animated: true)
     }
-    
+
     
     //MARK: CollectionView: collectionViewDelegate method - getPictureList
     
@@ -254,7 +274,7 @@ class JournalEntryEditor: UITableViewController, UICollectionViewDataSource, UIC
             fatalError("Cannot connect a image cell")
         }
         cell.imageView.contentMode = .scaleAspectFill
-        cell.imageView.image = selectedImagesArray[indexPath.row].image
+        cell.imageView.image = selectedImagesArray[indexPath.row].thumbnail
         cell.borderWidth = 0.0
         cell.isSelected = false
         return cell
@@ -269,7 +289,7 @@ class JournalEntryEditor: UITableViewController, UICollectionViewDataSource, UIC
         if indexPath.row == selectedImagesArray.count {
             
             // prevent selecting if maxPictures has reached
-            if selectedImagesArray.count < maxImages {
+            if selectedImagesArray.count < maxImages && editingModeOn == false {
                 self.navigationController?.present(imagePicker, animated: true, completion: nil)
             }
         
@@ -286,6 +306,8 @@ class JournalEntryEditor: UITableViewController, UICollectionViewDataSource, UIC
                 saveButtonRef.removeTarget(self, action: #selector(saveJournalEntryHandler), for: .touchUpInside)
                 saveButtonRef.addTarget(self, action: #selector(removeSelectedImage), for: .touchUpInside)
                 saveButtonRef.setTitle("Delete", for: .normal)
+                editingModeOn = true
+                
             }
         }
     }
@@ -307,6 +329,7 @@ class JournalEntryEditor: UITableViewController, UICollectionViewDataSource, UIC
                 saveButtonRef.removeTarget(self, action: #selector(removeSelectedImage), for: .touchUpInside)
                 saveButtonRef.addTarget(self, action: #selector(saveJournalEntryHandler), for: .touchUpInside)
                 saveButtonRef.setTitle("Save", for: .normal)
+                editingModeOn = false
             }
         }
     }
@@ -356,9 +379,8 @@ class JournalEntryEditor: UITableViewController, UICollectionViewDataSource, UIC
             
             selectedImagesArray.append(entryRef)
             
-            collectionViewRef.reloadData()
         }
-        picker.dismiss(animated: true, completion: nil)
+        picker.dismiss(animated: true, completion: { [unowned self] in self.collectionViewRef.reloadData() })
     }
     
     @IBAction func deleteJournalEntry(_ sender: Any) {
@@ -529,6 +551,7 @@ class JournalEntryEditor: UITableViewController, UICollectionViewDataSource, UIC
         saveButtonRef.removeTarget(self, action: #selector(removeSelectedImage), for: .touchUpInside)
         saveButtonRef.addTarget(self, action: #selector(saveJournalEntryHandler), for: .touchUpInside)
         saveButtonRef.setTitle("Save", for: .normal)
+        editingModeOn = false
     }
 
     //MARK: check if any cell was selected
@@ -597,6 +620,9 @@ class JournalEntryEditor: UITableViewController, UICollectionViewDataSource, UIC
         hasBackgroundWork = true
         let largeImagesArray = selectedImagesArray.map { $0.image }
         
+        // clean images array and deallocate memory
+        selectedImagesArray.removeAll()
+
         // [START Level1] add data to firebase
         firebaseManager.replaceNestedJournalEntry(
             target: journalRef,
@@ -636,8 +662,6 @@ class JournalEntryEditor: UITableViewController, UICollectionViewDataSource, UIC
                 })
         })
         
-
     }
     
 }
-
