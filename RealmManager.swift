@@ -2,7 +2,7 @@
 //  RealmManager.swift
 //  PhotoTimeline
 //
-//  Created by Alex on 05/03/2019.
+//  Created by Alex on 19/02/2019.
 //  Copyright © 2019 Alex. All rights reserved.
 //
 
@@ -51,27 +51,6 @@ class RealmManager {
             return false
         }
     }
-    
-    /*
-    //MARK: the generic func for dataModel array of classes creation
-
-    func createClass<T: Object>(creationClass: [T]) -> Bool {
-        do {
-            //let genericClass = T()
-            let realm = try Realm()
-            try realm.write {
-                for classRef in creationClass {
-                    realm.add(classRef)
-                }
-            }
-            print("Journal added")
-            return true
-        } catch let err as NSError {
-            print("Error in journal adding: \(err.description)")
-            return false
-        }
-    }
-     */
 
     
     //MARK: generic delete func
@@ -133,6 +112,7 @@ class RealmManager {
                 if title != nil { object.title = title! }
                 if numberOFCountries != nil { object.numberOFCountries = numberOFCountries! }
                 if numberOfEntries != nil { object.numberOfEntries = numberOfEntries! }
+                if creationDate != nil { object.creationDate = creationDate! }
                 if lastModifiedDate != nil { object.lastModifiedDate = lastModifiedDate! }
                 if entryID != nil { object.entryID = entryID! }
             }
@@ -210,6 +190,7 @@ class RealmManager {
      */
     func removeNestedObject(target:JournalRoot, object:JournalEntry) -> Error? {
         do {
+            
             let realm = try Realm()
             guard let indexOfObject = target.entries.index(of: object),
                 object.isInvalidated == false else {
@@ -248,7 +229,7 @@ class RealmManager {
         }
     }
 
-    //MARK: remove selected the journalEntry from the journalRoot
+    //MARK: replace the selected journalEntry from the journalRoot
     /**
      Replace a JournalEntry object in the given a JournalRoot object
      - parameter rootJournal: a JournalRoot object
@@ -264,7 +245,51 @@ class RealmManager {
                 return false
             }
             try realm.write {
+                //rootJournal.entries.remove(at: index)
+                //rootJournal.entries.insert(newObject, at: index)
                 rootJournal.entries.replace(index: index, object: newObject)
+            }
+            
+            // it should be here, or it does not work in some reason...
+            _ = replaceNestedObject(newObject: newObject, oldObjectID: oldObject.entryID)
+            print("A nested object updated")
+            return true
+
+        } catch let err as NSError {
+            print("Error in updating a nested object: \(err.description)")
+            return false
+        }
+        
+        
+    }
+    
+    private func replaceNestedObject(newObject:JournalEntry, oldObjectID: String) -> Bool {
+        do {
+            let realm = try Realm()
+            let predictate = NSPredicate(format: "entryID = %@", oldObjectID)
+            guard let oldObject = realm.objects(JournalEntry.self).filter(predictate).first else {
+                return false
+            }
+            try realm.write {
+                oldObject.creationDate = newObject.creationDate
+                oldObject.descriptionText = newObject.descriptionText
+                oldObject.entryID = newObject.entryID
+                
+                // strange. cant write: oldObject.imagesFilenames = newObject.imagesFilenames...
+                oldObject.imagesFilenames.removeAll()
+                oldObject.imagesFilenames.append(objectsIn: newObject.imagesFilenames)
+                
+                oldObject.lastModifiedDate = newObject.lastModifiedDate
+                oldObject.locationLattitute = newObject.locationLattitute
+                oldObject.locationLongitute = newObject.locationLongitute
+                oldObject.locationName = newObject.locationName
+                oldObject.locationRegionID = newObject.locationRegionID
+                
+                oldObject.thumbnails.removeAll()
+                oldObject.thumbnails.append(objectsIn: newObject.thumbnails)
+                
+                oldObject.offline = newObject.offline
+                
             }
             print("A nested object updated")
             return true
@@ -272,7 +297,9 @@ class RealmManager {
             print("Error in updating a nested object: \(err.description)")
             return false
         }
+
     }
+
     
     
     //MARK: insert images in a JournalEntry object
@@ -293,54 +320,92 @@ class RealmManager {
                     object.thumbnails.append(thumbnails[index])
                 }
             }
+            print("Images \(imagesNames.count) inserted into entry:\(object.entryID)")
             return true
         } catch let err as NSError {
-            print("Error in findind ID: \(err.description)")
+            print("Error in inserting images: \(err.description)")
             return false
         }
 
     }
     
-    /*
-    func createJournalEntry(data:[String:Any]) -> JournalEntry? {
-        guard let creationDate = data["creationDate"] as? Timestamp,
-            let lastModifiedDate = data["lastModifiedDate"] as? Timestamp,
-            let entryID = data["entryID"] as? String else { return nil }
-
-        let newEntry = JournalEntry()
-        newEntry.creationDate = creationDate.dateValue()
-        newEntry.lastModifiedDate = lastModifiedDate.dateValue()
-        newEntry.entryID = entryID
-        newEntry.descriptionText = data["descriptionText"] as? String ?? ""
-        newEntry.locationLattitute = data["locationLattitute"] as? Double ?? 0.0
-        newEntry.locationLongitute = data["locationLongitute"] as? Double ?? 0.0
-        newEntry.locationName = data["locationName"] as? String ?? ""
-        newEntry.locationRegionID = data["locationRegionID"] as? String ?? ""
-        return newEntry
+    //MARK: insert images in a JournalEntry object
+    /**
+     Get all nested images from a JournalRoot object
+     - parameter object: a JournalRoot object
+     - parameter images: normal size images
+     - parameter thumbnails: small size images
+     */
+    func getAllLocalImageNames(_ journal: JournalRoot) -> (images:[String], thumbnails:[String]) {
+        var largeImages = [String]()
+        var smallImages = [String]()
+        for entry in journal.entries {
+            largeImages.insert(contentsOf: Array(entry.imagesFilenames), at: 0)
+            smallImages.insert(contentsOf: Array(entry.thumbnails), at: 0)
+        }
+        return (largeImages, smallImages)
     }
- 
     
-    //MARK: check if currentID exist
-    
-    func doesCurrentIDExist<T: Object>(entryID:Int, object:T.Type) -> Bool {
+    //MARK: Sort entries
+    /**
+     Sort entries
+     - parameter journalRoot: a JournalRoot object
+     */
+    func sortNestedEntries(_ journalRoot:JournalRoot) {
         do {
             let realm = try Realm()
-            let results = realm.objects(T.self).filter("entryID = \(entryID)")
-            if results.count == 0 {
-                print("id#\(entryID) does not exist")
-                return false
-            } else {
-                print("id#\(entryID) is exist")
-                return true
+            try realm.write {
+                journalRoot.entries.sort(by: { (leftEntry, rightEntry) -> Bool in
+                    return leftEntry.lastModifiedDate! > rightEntry.lastModifiedDate!
+                })
+                print("Journal \(journalRoot.entryID) sorted")
             }
         } catch let err as NSError {
-            print("Error in findind ID: \(err.description)")
-            return false
+            print("Error in sorting: \(err.description)")
         }
     }
- 
-     */
 
+    //MARK: Sort root journals
+    /**
+     Sort entries
+     - parameter journals: an array of JournalRoot objects
+     */
+    func sortRootJournals(_ journals: inout [JournalRoot]) {
+        do {
+            let realm = try Realm()
+            try realm.write {
+                journals.sort(by: { (leftEntry, rightEntry) -> Bool in
+                    return leftEntry.lastModifiedDate > rightEntry.lastModifiedDate
+                })
+                print("Journals sorted")
+            }
+        } catch let err as NSError {
+            print("Error in sorting: \(err.description)")
+        }
+    }
+    
+    //MARK: Set a JournalRoot object offline
+    /**
+     Set a JournalRoot object offline and also all nested entries.
+     - parameter journalRoot: an inout array of JournalRoot objects
+     */
+    func setRootsOffline(_ journalRoot: inout [JournalRoot]) {
+        do {
+            let realm = try Realm()
+            try realm.write {
+                for entry in journalRoot {
+                    entry.offline = true
+                    entry.entries.forEach({ $0.offline = true })
+                }
+                print("setRootOffline added")
+            }
+        } catch let err as NSError {
+            print("Error in setRootOffline: \(err.description)")
+        }
+    }
+    
+    
+    
     //MARK: get random number - for testing purporse. better approach: UUID().uuidString
 
     static func getRandomString() -> String {
