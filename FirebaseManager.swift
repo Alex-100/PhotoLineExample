@@ -22,7 +22,7 @@ class FirebaseManager {
 
     init() {
         db = Firestore.firestore()
-
+    
         //set default values if the app starts for the first time
         FirebaseCredentials.setDefaultsValues()
         
@@ -32,10 +32,16 @@ class FirebaseManager {
         photosCollectionName = UserDefaults.standard.string(forKey: FirebaseCredentials.photosKey)!
     }
     
+    struct EntryName {
+        let entryID: String
+        let imageName: String
+        let thumbnailName:String
+    }
+    
     //MARK: is user logged in check.
     /**
      Check if a user logged in
-     - parameter completion: an escaping completion block with result. True if a user logged in, false overwise.
+     - parameter result: True if a user logged in, false overwise.
      */
     func isUserlogedIn(completion:@escaping((_ result:Bool)->Void)) {
         
@@ -142,8 +148,14 @@ class FirebaseManager {
         // save for futher using if a journal was deleted earlier
         let journalID = journal.entryID
         
+        // create local copy of links if a viewController suddenly closed
+        let dbase = Firestore.firestore()
+        let entryCollectionName = String(journalEntryCollectionName)
+        let journalRootCollectioName = String(journalCollectionName)
+        let photoCollectionName = String(journalCollectionName)
+        
         //[START Level1] delete the journalRoot itself
-        db.collection(journalCollectionName).document(journal.entryID).delete() { [weak self] err in
+        dbase.collection(journalRootCollectioName).document(journal.entryID).delete() { err in
             
             if err != nil {
                 completion(err)
@@ -154,12 +166,12 @@ class FirebaseManager {
             
             
             //[START Level2] delete all related entries
-            let batch = self!.db.batch()
-            let ref = self!.db.collection(self!.journalEntryCollectionName)
+            let batch = dbase.batch()
+            let ref = dbase.collection(entryCollectionName)
                 .whereField("journalRootRef", isEqualTo: journalID)
             
             // get the documents array
-            ref.getDocuments(completion: { [weak self] (query, error) in
+            ref.getDocuments(completion: { (query, error) in
                 if error != nil {
                     completion(error)
                     return
@@ -180,8 +192,8 @@ class FirebaseManager {
                     //[END Level2]
                     
                     //[START Level3] delete all related photos
-                    let batch1 = self!.db.batch()
-                    let ref1 = self!.db.collection(self!.photosCollectionName)
+                    let batch1 = dbase.batch()
+                    let ref1 = dbase.collection(photoCollectionName)
                         .whereField("journalRootRef", isEqualTo: journalID)
                     ref1.getDocuments(completion: { (query, error) in
                         if error != nil {
@@ -216,7 +228,7 @@ class FirebaseManager {
     /**
      Change an JournalRoot object fields.
      */
-    func changeJournalRootFields(object: JournalRoot,
+    func changeJournalRootFields(object: JournalRoot?,
                                  title: String?,
                                  creationDate: Date?,
                                  lastModifiedDate: Date?,
@@ -224,7 +236,11 @@ class FirebaseManager {
                                  numberOfEntries: Int?,
                                  entryID: String?,
                                  completion:@escaping(Error?)->Void) {
-        let ref = db.collection(journalCollectionName).document(object.entryID)
+        if object == nil {
+            completion(PhotoTimelineError.objectIsNill(method: "changeJournalRootFields"))
+            return
+        }
+        let ref = db.collection(journalCollectionName).document(object!.entryID)
         var fieldsToChange = [String:Any]()
         if title != nil { fieldsToChange["title"] = title }
         if creationDate != nil { fieldsToChange["creationDate"] = creationDate }
@@ -248,7 +264,7 @@ class FirebaseManager {
      Get all root objects
      - parameter completion: an escaping completion block with an array of JournalRoot objects
      */
-    func getJornalRootList(completion: @escaping(Error?, [JournalRoot]?)->Void ) {
+    func getJornalRootList(completion:@escaping (Error?, [JournalRoot]?)->Void ) {
         let journalRef = db.collection(journalCollectionName)
         var results = [JournalRoot]()
         journalRef.getDocuments { (query, error) in
@@ -297,18 +313,14 @@ class FirebaseManager {
                 return
             }
             
-            let documentDir = try! FileManager.default.url(for: .documentDirectory,
-                                                      in: .userDomainMask,
-                                                      appropriateFor: nil,
-                                                      create: true)
-            
             for imageRef in query!.documents {
                 // save a large image locally
                 let base64StringImage = imageRef["image"] as! String
                 
                 // check if possible to decrypt an image
                 guard let encryptedImageData = Data(base64Encoded: base64StringImage),
-                    let imageData = self.decryptImage(encryptedImageData, password: passw) else {
+                    let imageData = self.decryptImage(encryptedImageData, password: passw),
+                    let img = UIImage(data: imageData) else {
                         print("Decryption error")
                         largeImageNames.removeAll()
                         smallImageNames.removeAll()
@@ -316,25 +328,27 @@ class FirebaseManager {
                         return
                 }
                 
-                let imageName = RealmManager.getRandomString()
-                let urlToWrite = documentDir.appendingPathComponent(imageName)
-                try! imageData.write(to: urlToWrite)
-                largeImageNames.append(imageName)
+                let (imageURL, thumbnailURL) = ImageManager.saveImageAndThumbnail(image: img)
+                if imageURL == nil || thumbnailURL == nil {
+                    print("Image saving error")
+                    largeImageNames.removeAll()
+                    smallImageNames.removeAll()
+                    completion(PhotoTimelineError.imageSavingError, largeImageNames, smallImageNames)
+                    return
+
+                }
+                largeImageNames.append(imageURL!.lastPathComponent)
+                smallImageNames.append(thumbnailURL!.lastPathComponent)
                 
-                // save a small image locally
-                let smallImage = ImageManager.resizeImage(image: UIImage(data: imageData)!,
-                                                          target: ImageManager.thumbnailSize)
-                let smallImageData = smallImage.jpegData(compressionQuality: 1.0)
-                let smallImageName = "\(ImageManager.thumbnailPrefix)\(imageName)"
-                let smallURLtoWrite = documentDir.appendingPathComponent(smallImageName)
-                try! smallImageData?.write(to: smallURLtoWrite)
-                smallImageNames.append(smallImageName)
-                
-                print("saved image:\(imageName) ...")
             }
             completion(nil, largeImageNames, smallImageNames)
         }
         
+    }
+    
+    func saveNestedImagesLocally(objectID:[String],
+                                 completion:@escaping(_ error:Error?, _ results:[EntryName])->Void) {
+    
     }
     
     
@@ -343,8 +357,10 @@ class FirebaseManager {
      Get from the Firebase and create all nested JournalEntry objects and JournalRoot class
      - parameter object: object with nested classes
      - parameter completion: an escaping completion block with a list of all nested JournalEntry objects
+     - parameter error: escaping closure parameter. Not nil if something wrong.
+     - parameter list: an array of JournalEntry objects.
      */
-    func getNestedJournalEntryList(object: JournalRoot, completion:@escaping(Error?, [JournalEntry]?)->Void) {
+    func getNestedJournalEntryList(object: JournalRoot, completion:@escaping(_ error:Error?, _ list:[JournalEntry]?)->Void) {
         let ref = db.collection(journalEntryCollectionName)
             .whereField("journalRootRef", isEqualTo: object.entryID)
         var results = [JournalEntry]()
@@ -385,13 +401,12 @@ class FirebaseManager {
      - parameter target: JournalRoot object where to find nested object
      - parameter object: a new JournalEntry nested object
      - parameter largeImages: an array of UIImage
-     - parameter completion: execute completion block when an operation will be finished
-     
+     - parameter error: escaping closure parameter. Not nil if something wrong.
      */
     func replaceNestedJournalEntry(target: JournalRoot,
                                 object:JournalEntry,
                                 largeImages:[UIImage],
-                                completion: @escaping(Error?)->Void) {
+                                completion: @escaping(_ error:Error?)->Void) {
         
         var ref: DocumentReference?
         let batch1 = db.batch()
@@ -460,7 +475,7 @@ class FirebaseManager {
                     var entryDict = [
                         "journalRootRef": target.entryID as Any,
                         "creationDate": object.creationDate as Any,
-                        "lastModifiedDate": Date(),
+                        "lastModifiedDate": object.lastModifiedDate as Any,
                         "descriptionText": object.descriptionText as Any,
                         "entryID": object.entryID as Any,
                         "locationName": object.locationName as Any,
@@ -531,8 +546,9 @@ class FirebaseManager {
      - parameter journalRootID: an JournalRoot entryID field.
      - parameter result: true if exist, false otherwise.
      */
-    func isJournalRootExist(journalRootID:String, completion: @escaping((_ result:Bool)->Void)) {
-        let results = db.collection(journalCollectionName).whereField("entryID", isEqualTo: journalRootID)
+    func isJournalRootExist(journalRootID:String?, completion: @escaping((_ result:Bool)->Void)) {
+        if journalRootID == nil { completion(false) }
+        let results = db.collection(journalCollectionName).whereField("entryID", isEqualTo: journalRootID!)
         results.getDocuments { (query, error) in
             if error != nil {
                 completion(false)
